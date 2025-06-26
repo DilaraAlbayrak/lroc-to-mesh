@@ -4,7 +4,7 @@
 
 int main() {
     GDALAllRegister();
-    const char* filename = "NAC_DTM_APOLLO11_E480N0005_DEM1.IMG";
+    const char* filename = "NAC_DTM_APOLLO11.TIF";
 
     GDALDataset* dataset = (GDALDataset*)GDALOpen(filename, GA_ReadOnly);
     if (!dataset) {

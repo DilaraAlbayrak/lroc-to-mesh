@@ -122,6 +122,7 @@
       <PreprocessorDefinitions>NDEBUG;_CONSOLE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
       <ConformanceMode>true</ConformanceMode>
       <AdditionalIncludeDirectories>$(SolutionDir)GDAL\include</AdditionalIncludeDirectories>
+      <OpenMPSupport>true</OpenMPSupport>
     </ClCompile>
     <Link>
       <SubSystem>Console</SubSystem>
@@ -135,9 +136,11 @@
   <ItemGroup>
     <ClCompile Include="DigitalTerrainModel.cpp" />
     <ClCompile Include="main.cpp" />
+    <ClCompile Include="MeshGenerator.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="DigitalTerrainModel.h" />
+    <ClInclude Include="MeshGenerator.h" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

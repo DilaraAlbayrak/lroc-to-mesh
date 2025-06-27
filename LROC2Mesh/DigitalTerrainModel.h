@@ -1,3 +1,13 @@
+/**
+ * @class DigitalTerrainModel
+ * @brief Manages all interactions with the GDAL library to handle the DTM file.
+ *
+ * This class encapsulates the behaviour for opening, reading, and providing
+ * metadata about a GeoTIFF Digital Terrain Model. It employs the RAII
+ * (Resource Acquisition Is Initialisation) principle to ensure the GDAL dataset
+ * is properly closed upon object destruction.
+ */
+
 #pragma once
 #include <string>
 #include <gdal_priv.h>
@@ -20,7 +30,7 @@ private:
 	// GeoTransform parameters for the raster dataset
 	// 0 : top left x, 1 : pixel width, 2 : rotation (0 if North is up), 3 : top left y, 4 : rotation (0 if North is up), 5 : pixel height (negative value for North up)
 	double _geoTransform[6] = { 0.0, 2.0, 0.0, 0.0, 0.0, -2.0 }; // Default values
-    float _noDataValue;
+    double _noDataValue;
 
 public:
 	// explicit constructor because we want to avoid implicit conversions
@@ -29,18 +39,18 @@ public:
 		_dataset = (GDALDataset*)GDALOpen(filePath.c_str(), GA_ReadOnly);
 		if (!_dataset)
 		{
-			throw std::runtime_error("Failed to open the DTM file: " + filePath);
+			throw std::runtime_error(">>>> failed to open the DTM file: " + filePath);
 		}
 
 		if (_dataset->GetGeoTransform(_geoTransform) != CE_None)
 		{
-			throw std::runtime_error("Failed to get GeoTransform from file: " + _filePath);
+			throw std::runtime_error(">>>> failed to get GeoTransform from file: " + _filePath);
 		}
 
 		_rasterBand = _dataset->GetRasterBand(1);
 		if (!_rasterBand)
 		{
-			throw std::runtime_error("Failed to get raster band 1 from file: " + _filePath);
+			throw std::runtime_error(">>>> failed to get raster band 1 from file: " + _filePath);
 		}
 
 		_width = _rasterBand->GetXSize();

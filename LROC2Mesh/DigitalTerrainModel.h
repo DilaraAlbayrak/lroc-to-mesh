@@ -30,7 +30,7 @@ private:
 	// GeoTransform parameters for the raster dataset
 	// 0 : top left x, 1 : pixel width, 2 : rotation (0 if North is up), 3 : top left y, 4 : rotation (0 if North is up), 5 : pixel height (negative value for North up)
 	double _geoTransform[6] = { 0.0, 2.0, 0.0, 0.0, 0.0, -2.0 }; // Default values
-    double _noDataValue;
+    float _noDataValue;
 
 public:
 	// explicit constructor because we want to avoid implicit conversions

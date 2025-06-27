@@ -11,6 +11,10 @@
 *.sln.docstates
 *.TIF
 *.tif
+*.TIFF
+*.tiff
+*.PNG
+*.png
 
 # User-specific files (MonoDevelop/Xamarin Studio)
 *.userprefs

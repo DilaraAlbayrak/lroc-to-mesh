@@ -10,13 +10,22 @@ int main(int argc, char* argv[])
     std::string outputFile;
     double zScale;
 
+    auto getBaseName = [](const std::string& fileName) -> std::string {
+        size_t last_dot_pos = fileName.rfind('.');
+        if (last_dot_pos != std::string::npos) 
+            return fileName.substr(0, last_dot_pos);
+
+        return fileName;
+        };
+
 	// no arguments provided, use default values
     if (argc == 1)
     {
         std::cout << ">>>> running with default debug values.\n";
-        inputFile = "NAC_DTM_APOLLO11.TIF"; 
-        outputFile = "apollo11.obj";   
-        zScale = 1.0;                      
+		//inputFile = "DTM_patch.tiff"; // 1024m X 1024m, 2m resolution
+		inputFile = "NAC_DTM_APOLLO11.TIF"; // 1055.5m X 6989m, 2m resolution
+		outputFile = getBaseName(inputFile) + ".obj"; 
+        zScale = 1.5;                      
     }
     else if (argc == 3 || argc == 4)
     {
@@ -33,7 +42,6 @@ int main(int argc, char* argv[])
         return 1; 
     }
 
-
     // Initialise GDAL
     GDALAllRegister();
 
@@ -45,7 +53,8 @@ int main(int argc, char* argv[])
 
         DigitalTerrainModel dtm(inputFile);
         MeshGenerator generator;
-        generator.generateMesh(dtm, outputFile, zScale);
+        generator.generateMesh(dtm, outputFile, 3, zScale);
+		generator.generateHeightmap(dtm, getBaseName(inputFile) + "_heightmap_8-bit.png");
     }
     catch (const std::exception& e)
     {

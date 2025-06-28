@@ -53,7 +53,8 @@ int main(int argc, char* argv[])
 
         DigitalTerrainModel dtm(inputFile);
         MeshGenerator generator;
-        generator.generateMesh(dtm, outputFile, 3, zScale);
+        int downscaleFactor = 1;
+        generator.generateMesh(dtm, outputFile, downscaleFactor, zScale);
 		generator.generateHeightmap(dtm, getBaseName(inputFile) + "_heightmap_8-bit.png");
     }
     catch (const std::exception& e)

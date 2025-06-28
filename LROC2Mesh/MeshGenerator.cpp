@@ -15,164 +15,238 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include "stb_image_write.h"
 
-void MeshGenerator::writeVertices(std::ofstream& file, const DigitalTerrainModel& dtm, double zScale, std::vector<int>& vertexMap, int downscaleFactor) const
+struct Vector3
 {
-	std::cout << ">>>> writing vertices" << std::endl;
+	double x = 0.0, y = 0.0, z = 0.0;
 
-	const double* geoTransform = dtm.getGeoTransform();
-	const float noDataValue = dtm.getNoDataValue();
-	int width = dtm.getWidth();
-	int height = dtm.getHeight();
-
-	std::vector<float> scanlineBuffer(width);
-
-	int currentVertexIndex = 1;
-
-	for (int y = 0; y < height; y += downscaleFactor)
-	{
-		if (!dtm.readScanline(y, scanlineBuffer))
-		{
-			std::cerr << ">>>> failed to read scanline " << y << std::endl;
-			continue;
-		}
-
-		for (int x = 0; x < width; x += downscaleFactor)
-		{
-			float elevation = scanlineBuffer[x];
-			if (elevation == noDataValue)
-				continue; // Skip NoData values
-
-			// Calculate the geographic coordinates
-			double worldX = geoTransform[0] + x * geoTransform[1] + y * geoTransform[2];
-			double worldY = geoTransform[3] + x * geoTransform[4] + y * geoTransform[5];
-			double worldZ = -elevation * zScale;
-
-            file << "v " << worldX << " " << worldY << " " << worldZ << "\n";
-			vertexMap[y * width + x] = currentVertexIndex++;
-		}
-
-		if ((y + 1) % 100000 == 0)
-		{
-			std::cout << ">>>> processed " << (y + 1) << " of " << height << " lines for vertices.\n";
-		}
+	Vector3& operator+=(const Vector3& other) {
+		x += other.x;
+		y += other.y;
+		z += other.z;
+		return *this;
 	}
 
-	file << "# Total vertices: " << (currentVertexIndex - 1) << "\n\n";
-	std::cout << ">>>> # total vertices: " << (currentVertexIndex - 1) << "\n\n";
+	void normalize()
+	{
+		double length = std::sqrt(x * x + y * y + z * z);
+		if (length > 1e-6) { // avoid division by zero
+			x /= length;
+			y /= length;
+			z /= length;
+		}
+	}
+};
+
+Vector3 cross(const Vector3& a, const Vector3& b)
+{
+	return {
+		a.y * b.z - a.z * b.y,
+		a.z * b.x - a.x * b.z,
+		a.x * b.y - a.y * b.x
+	};
 }
 
-void MeshGenerator::writeFaces(std::ofstream& file, const DigitalTerrainModel& dtm, const std::vector<int>& vertexMap, int downscaleFactor) const
-{
-	std::cout << ">>>> writing faces" << std::endl;
-
-	const int width = dtm.getWidth();
-	const int height = dtm.getHeight();
-	long long faceCount = 0; // to keep millions of faces
-
-	// a vector of stringstreams, each thread could write to its own stream
-	// this avoids race condition on the single output file stream
-	std::vector<std::stringstream> privateBuffers;
-
-	#pragma omp parallel
-	{
-		// Each thread gets its own private stringstream buffer.
-		// This is crucial to prevent multiple threads from writing to the same memory at once.
-		std::stringstream localBuffer;
-
-		// Distribute the 'y' loop iterations among the available threads.
-		// 'schedule(static)' divides the work into contiguous (adjacent) chunks and gives one to each thread.
-		// 'reduction(+:totalFaceCount)' creates a private copy of totalFaceCount for each thread,
-		// and safely combines them (sums them up) at the end of the parallel region.
-		#pragma omp for schedule(static) reduction(+:faceCount)
-		for (int y = 0; y < height - downscaleFactor; y += downscaleFactor)
-		{
-			for (int x = 0; x < width - downscaleFactor; x += downscaleFactor)
-			{
-				// Get the four corner vertices of the larger quad, spaced by 'downscaleFactor'.
-				int v1 = vertexMap[static_cast<size_t>(y) * width + x];                  // Top-left
-				int v2 = vertexMap[static_cast<size_t>(y) * width + (x + downscaleFactor)];          // Top-right
-				int v3 = vertexMap[(static_cast<size_t>(y) + downscaleFactor) * width + x];          // Bottom-left
-				int v4 = vertexMap[(static_cast<size_t>(y) + downscaleFactor) * width + (x + downscaleFactor)]; // Bottom-right
-
-				if (v1 == 0 || v2 == 0 || v3 == 0 || v4 == 0)
-					continue;
-
-				// Write the output to the thread's private local buffer, not the main file stream.
-				// two triangles for the quad formed by the vertices
-				localBuffer << "f " << v1 << " " << v3 << " " << v4 << "\n";
-				localBuffer << "f " << v1 << " " << v4 << " " << v2 << "\n";
-				faceCount += 2;
-			}
-		}
-
-		// A critical section ensures that only one thread at a time can execute this block.
-		// This is necessary to safely push the thread's local buffer into the shared 'privateBuffers' vector.
-		#pragma omp critical
-		{
-			// std::move is used for efficiency, avoiding a potentially expensive copy of the stringstream.
-			privateBuffers.push_back(std::move(localBuffer));
-		}
-	}
-
-	// At this point, all parallel processing is complete.
-	// Now, write the contents of each thread's buffer to the main file stream sequentially.
-	// This ensures the output in the final file remains in the correct order.
-	std::cout << ">>>> flushing parallel buffers to file" << std::endl;
-	for (const auto& buffer : privateBuffers)
-	{
-		file << buffer.rdbuf();
-	}
-
-	file << "# Total faces: " << faceCount << "\n";
-	std::cout << ">>>> # total faces: " << faceCount << "\n";
+// Overload the - operator for Vector3
+Vector3 operator-(const Vector3& a, const Vector3& b) {
+	return { a.x - b.x, a.y - b.y, a.z - b.z };
 }
 
 void MeshGenerator::generateMesh(const DigitalTerrainModel& dtm, const std::string& outputFilePath, int downscaleFactor, double zScale) const
 {
-	auto total_start = std::chrono::high_resolution_clock::now();
+    if (downscaleFactor < 1) {
+        std::cout << ">>>> warning: downscaleFactor cannot be less than 1. Setting to 1 (no downscaling).\n";
+        downscaleFactor = 1;
+    }
 
-	std::cout << ">>>> generating mesh for DTM" << std::endl;
-	std::ofstream file(outputFilePath);
+    auto total_start = std::chrono::high_resolution_clock::now();
+    std::cout << ">>>> generating mesh for DTM with normals (Downscale: " << downscaleFactor << "x, OpenMP: enabled)" << std::endl;
 
-	// for number formatting, which always uses a period '.' as the decimal separator,
-    // ensuring the .obj file is universally compatible.
+    const int width = dtm.getWidth();
+    const int height = dtm.getHeight();
+
+    // --- 1. Generate vertex data in memory ---
+    std::cout << "\n>>>> [1/5] generating vertices in memory...\n";
+    std::vector<Vector3> vertices;
+    std::vector<int> vertexMap(static_cast<size_t>(width) * height, 0);
+
+    const double* geoTransform = dtm.getGeoTransform();
+    const float noDataValue = dtm.getNoDataValue();
+    std::vector<float> scanlineBuffer(width);
+
+    for (int y = 0; y < height; y += downscaleFactor) {
+        if (!dtm.readScanline(y, scanlineBuffer)) continue;
+        for (int x = 0; x < width; x += downscaleFactor) {
+            float elevation = scanlineBuffer[x];
+            if (elevation == noDataValue) continue;
+
+            Vector3 pos;
+            pos.x = geoTransform[0] + x * geoTransform[1] + y * geoTransform[2];
+            pos.y = geoTransform[3] + x * geoTransform[4] + y * geoTransform[5];
+            pos.z = -elevation * zScale;
+
+            vertices.push_back(pos);
+            vertexMap[static_cast<size_t>(y) * width + x] = static_cast<int>(vertices.size());
+        }
+    }
+    std::cout << ">>>> generated " << vertices.size() << " vertices.\n";
+
+    // --- Center the Model to Origin  ---
+    if (!vertices.empty()) {
+        std::cout << "\n>>>> [2/5] centering the model to origin...\n";
+        Vector3 min_bound = vertices[0];
+        Vector3 max_bound = vertices[0];
+
+        for (size_t i = 1; i < vertices.size(); ++i) {
+            min_bound.x = std::min(min_bound.x, vertices[i].x);
+            min_bound.y = std::min(min_bound.y, vertices[i].y);
+            min_bound.z = std::min(min_bound.z, vertices[i].z);
+            max_bound.x = std::max(max_bound.x, vertices[i].x);
+            max_bound.y = std::max(max_bound.y, vertices[i].y);
+            max_bound.z = std::max(max_bound.z, vertices[i].z);
+        }
+
+        Vector3 center;
+        center.x = min_bound.x + (max_bound.x - min_bound.x) / 2.0;
+        center.y = min_bound.y + (max_bound.y - min_bound.y) / 2.0;
+        center.z = min_bound.z + (max_bound.z - min_bound.z) / 2.0;
+
+        for (auto& v : vertices) {
+            v.x -= center.x;
+            v.y -= center.y;
+            v.z -= center.z;
+        }
+        std::cout << ">>>> model centered.\n";
+    }
+
+    // --- 2. Calculate vertex normals ---
+    std::cout << "\n>>>> [3/5] calculating vertex normals (in parallel)...\n";
+    std::vector<Vector3> normals(vertices.size(), { 0.0, 0.0, 0.0 });
+
+#pragma omp parallel
+    {
+#pragma omp for schedule(static)
+        for (int y = 0; y < height - downscaleFactor; y += downscaleFactor) {
+            for (int x = 0; x < width - downscaleFactor; x += downscaleFactor) {
+              
+                size_t idx_tl = static_cast<size_t>(y) * width + x;
+                size_t idx_tr = static_cast<size_t>(y) * width + (x + downscaleFactor);
+                size_t idx_bl = (static_cast<size_t>(y) + downscaleFactor) * width + x;
+                size_t idx_br = (static_cast<size_t>(y) + downscaleFactor) * width + (x + downscaleFactor);
+
+                int v1_idx = vertexMap[idx_tl];
+                int v2_idx = vertexMap[idx_tr];
+                int v3_idx = vertexMap[idx_bl];
+                int v4_idx = vertexMap[idx_br];
+
+                if (v1_idx == 0 || v2_idx == 0 || v3_idx == 0 || v4_idx == 0) continue;
+
+                const auto& p1 = vertices[v1_idx - 1];
+                const auto& p2 = vertices[v2_idx - 1];
+                const auto& p3 = vertices[v3_idx - 1];
+                const auto& p4 = vertices[v4_idx - 1];
+
+                Vector3 faceNormal1 = cross(p3 - p1, p4 - p1);
+
+#pragma omp atomic
+                normals[v1_idx - 1].x += faceNormal1.x;
+#pragma omp atomic
+                normals[v1_idx - 1].y += faceNormal1.y;
+#pragma omp atomic
+                normals[v1_idx - 1].z += faceNormal1.z;
+
+#pragma omp atomic
+                normals[v3_idx - 1].x += faceNormal1.x;
+#pragma omp atomic
+                normals[v3_idx - 1].y += faceNormal1.y;
+#pragma omp atomic
+                normals[v3_idx - 1].z += faceNormal1.z;
+
+#pragma omp atomic
+                normals[v4_idx - 1].x += faceNormal1.x;
+#pragma omp atomic
+                normals[v4_idx - 1].y += faceNormal1.y;
+#pragma omp atomic
+                normals[v4_idx - 1].z += faceNormal1.z;
+
+                Vector3 faceNormal2 = cross(p4 - p1, p2 - p1);
+#pragma omp atomic
+                normals[v1_idx - 1].x += faceNormal2.x;
+#pragma omp atomic
+                normals[v1_idx - 1].y += faceNormal2.y;
+#pragma omp atomic
+                normals[v1_idx - 1].z += faceNormal2.z;
+
+#pragma omp atomic
+                normals[v4_idx - 1].x += faceNormal2.x;
+#pragma omp atomic
+                normals[v4_idx - 1].y += faceNormal2.y;
+#pragma omp atomic
+                normals[v4_idx - 1].z += faceNormal2.z;
+
+#pragma omp atomic
+                normals[v2_idx - 1].x += faceNormal2.x;
+#pragma omp atomic
+                normals[v2_idx - 1].y += faceNormal2.y;
+#pragma omp atomic
+                normals[v2_idx - 1].z += faceNormal2.z;
+            }
+        }
+
+#pragma omp for
+        for (int i = 0; i < normals.size(); ++i) {
+            normals[i].normalize();
+        }
+    }
+    std::cout << ">>>> normals calculated and normalized.\n";
+
+    // --- 3. Write all data to OBJ file---
+    std::cout << "\n>>>> [4/5] writing data to .obj file...\n";
+    std::ofstream file(outputFilePath);
+    if (!file.is_open()) {
+        throw std::runtime_error(">>>> failed to open output file: " + outputFilePath);
+    }
     file.imbue(std::locale::classic());
+    file << std::fixed << std::setprecision(6);
 
-	if (!file.is_open())
-	{
-		throw std::runtime_error(">>>> failed to open output file: " + outputFilePath);
-	}
+    file << "# OBJ file generated by DTM-to-Mesh converter\n";
+    file << "o DTM_Mesh\n"; 
 
-	// map to store vertex indices, 1-based indexing
-	// a value of 0 indicates NoData
-	std::vector<int> vertexMap(dtm.getWidth() * dtm.getHeight(), 0);
+    file << "# Vertices: " << vertices.size() << "\n";
+    for (const auto& v : vertices) {
+        file << "v " << v.x << " " << v.y << " " << v.z << "\n";
+    }
 
-	//set precision for floating point numbers, i.e do not use scientific notation
-	file << std::fixed;
+    file << "\n# Vertex Normals: " << normals.size() << "\n";
+    for (const auto& vn : normals) {
+        file << "vn " << vn.x << " " << vn.y << " " << vn.z << "\n";
+    }
 
-	file << "# OBJ file generated by LROC DTM to Mesh Converter\n";
-	file << "# Source DTM: " << dtm.getWidth() << "x" << dtm.getHeight() << " pixels\n";
-	file << "# Vertical exaggeration: " << zScale << "\n\n";
+    file << "\ns off\n"; // Smoothing off eklendi
 
-	// write vertices
-	std::cout << "\n>>>> [1/2] writing vertices...\n";
-	auto vertices_start = std::chrono::high_resolution_clock::now();
-	writeVertices(file, dtm, zScale, vertexMap, downscaleFactor);
-	auto vertices_end = std::chrono::high_resolution_clock::now();
-	// Calculate the duration and cast it to milliseconds for readability.
-	auto duration = std::chrono::duration_cast<std::chrono::milliseconds>(vertices_end - vertices_start);
-	std::cout << ">>>> writeVertices completed in " << duration.count() << " ms.\n";
+    // --- 4. Write faces with normal indices ---
+    std::cout << "\n>>>> [5/5] writing faces with normal data...\n";
+    long long faceCount = 0;
+    file << "\n# Faces\n";
+    for (int y = 0; y < height - downscaleFactor; y += downscaleFactor) {
+        for (int x = 0; x < width - downscaleFactor; x += downscaleFactor) {
+            int v1 = vertexMap[static_cast<size_t>(y) * width + x];
+            int v2 = vertexMap[static_cast<size_t>(y) * width + (x + downscaleFactor)];
+            int v3 = vertexMap[(static_cast<size_t>(y) + downscaleFactor) * width + x];
+            int v4 = vertexMap[(static_cast<size_t>(y) + downscaleFactor) * width + (x + downscaleFactor)];
 
-	// write faces
-	std::cout << "\n>>>> [2/2] writing faces...\n";
-	auto faces_start = std::chrono::high_resolution_clock::now();
-	writeFaces(file, dtm, vertexMap, downscaleFactor);
-	auto faces_end = std::chrono::high_resolution_clock::now();
-	// Calculate the duration and cast it to milliseconds.
-	duration = std::chrono::duration_cast<std::chrono::milliseconds>(faces_end - faces_start);
-	std::cout << ">>>> writeFaces completed in " << duration.count() << " ms.\n";
+            if (v1 == 0 || v2 == 0 || v3 == 0 || v4 == 0) continue;
 
-	std::cout << ">>>> successfully generated mesh: " << outputFilePath << std::endl;
+            file << "f " << v1 << "//" << v1 << " " << v3 << "//" << v3 << " " << v4 << "//" << v4 << "\n";
+            file << "f " << v1 << "//" << v1 << " " << v4 << "//" << v4 << " " << v2 << "//" << v2 << "\n";
+            faceCount += 2;
+        }
+    }
+    file << "\n# Total faces: " << faceCount << "\n";
+    std::cout << ">>>> written " << faceCount << " faces.\n";
+
+    auto total_end = std::chrono::high_resolution_clock::now();
+    auto duration = std::chrono::duration_cast<std::chrono::seconds>(total_end - total_start);
+    std::cout << "\n>>>> successfully generated mesh: " << outputFilePath << " in " << duration.count() << "s.\n";
 }
 
 void MeshGenerator::generateHeightmap(const DigitalTerrainModel& dtm, const std::string& outputFilePath) const

@@ -4,11 +4,6 @@
 class MeshGenerator
 {
 private:
-    // Helper method to write all the vertex data to the file.
-    void writeVertices(std::ofstream& file, const DigitalTerrainModel& dtm, double zScale, std::vector<int>& vertexMap, int downscaleFactor = 1) const;
-
-    // Helper method to write all the face data, connecting the vertices.
-    void writeFaces(std::ofstream& file, const DigitalTerrainModel& dtm, const std::vector<int>& vertexMap, int downscaleFactor = 1) const;
 
     // Applies a simple 3x3 box blur. For each pixel, it averages the values
     // of the pixel and its 8 immediate neighbors.
